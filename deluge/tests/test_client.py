@@ -13,13 +13,13 @@ import deluge.component as component
 from deluge import error
 from deluge.common import AUTH_LEVEL_NORMAL, get_localhost_auth
 from deluge.core.authmanager import AUTH_LEVEL_ADMIN
-from deluge.ui.client import Client, DaemonSSLProxy, client
+from deluge.ui.client import Client, DaemonRemoteProxy, client
 
 from .basetest import BaseTestCase
 from .daemon_base import DaemonBase
 
 
-class NoVersionSendingDaemonSSLProxy(DaemonSSLProxy):
+class NoVersionSendingDaemonRemoteProxy(DaemonRemoteProxy):
     def authenticate(self, username, password):
         self.login_deferred = defer.Deferred()
         d = self.call('daemon.login', username, password)
@@ -38,7 +38,7 @@ class NoVersionSendingClient(Client):
 
     def connect(self, host='127.0.0.1', port=58846, username='', password='',
                 skip_authentication=False):
-        self._daemon_proxy = NoVersionSendingDaemonSSLProxy()
+        self._daemon_proxy = NoVersionSendingDaemonRemoteProxy()
         self._daemon_proxy.set_disconnect_callback(self.__on_disconnect)
 
         d = self._daemon_proxy.connect(host, port)

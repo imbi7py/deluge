@@ -15,7 +15,7 @@ from logging import DEBUG, FileHandler, getLogger
 
 from twisted.internet.error import CannotListenError
 
-from deluge.common import run_profiled
+from deluge.common import run_profiled, windows_check
 from deluge.configmanager import get_config_dir
 from deluge.ui.baseargparser import BaseArgParser
 from deluge.ui.translations_util import set_dummy_trans
@@ -23,6 +23,10 @@ from deluge.ui.translations_util import set_dummy_trans
 
 def add_daemon_options(parser):
     group = parser.add_argument_group(_('Daemon Options'))
+
+    if not windows_check():
+        group.add_argument('--ui-unix-socket', metavar='<path>', action='store',
+                           help=_('Path to UNIX domain socket'))
     group.add_argument('-u', '--ui-interface', metavar='<ip-addr>', action='store',
                        help=_('IP address to listen for UI connections'))
     group.add_argument('-p', '--port', metavar='<port>', action='store', type=int,
@@ -72,9 +76,16 @@ def start_daemon(skip_start=False):
     def run_daemon(options):
         try:
             from deluge.core.daemon import Daemon
-            daemon = Daemon(listen_interface=options.listen_interface,
-                            interface=options.ui_interface,
-                            port=options.port,
+            from deluge.core.rpcserver import ListenSSL, ListenUNIX
+
+            if options.ui_unix_socket is not None:
+                listener = ListenUNIX(path=options.ui_unix_socket)
+            else:
+                listener = ListenSSL(interface=options.ui_interface,
+                                     port=options.port)
+
+            daemon = Daemon(listener=listener,
+                            listen_interface=options.listen_interface,
                             read_only_config_keys=options.read_only_config_keys.split(','))
             if skip_start:
                 return daemon

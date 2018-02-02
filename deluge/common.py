@@ -1068,6 +1068,10 @@ def create_localclient_account(append=False):
         os.fsync(_file.fileno())
 
 
+def is_unix_domain_socket(host, port):
+    return '/' in host and port == 0
+
+
 def get_localhost_auth():
         """Grabs the localclient auth line from the 'auth' file and creates a localhost uri.
 

@@ -17,7 +17,7 @@ from socket import gaierror, gethostbyname
 
 from twisted.internet import defer
 
-from deluge.common import get_localhost_auth
+from deluge.common import get_localhost_auth, is_unix_domain_socket
 from deluge.config import Config
 from deluge.configmanager import get_config_dir
 from deluge.ui.client import Client, client
@@ -47,6 +47,8 @@ def validate_host_info(hostname, port):
         ValueError: Host details are not valid with reason.
     """
 
+    if is_unix_domain_socket(hostname, port):
+        return
     try:
         gethostbyname(hostname)
     except gaierror as ex:
@@ -197,11 +199,14 @@ class HostList(object):
             log.warning('Problem getting host_id info from hostlist')
             return status_offline
 
-        try:
-            ip = gethostbyname(host)
-        except gaierror as ex:
-            log.error('Error resolving host %s to ip: %s', host, ex.args[1])
-            return status_offline
+        if is_unix_domain_socket(host, port):
+            ip = host
+        else:
+            try:
+                ip = gethostbyname(host)
+            except gaierror as ex:
+                log.error('Error resolving host %s to ip: %s', host, ex.args[1])
+                return status_offline
 
         host_conn_info = (ip, port, 'localclient' if not user and host in LOCALHOST else user)
         if client.connected() and host_conn_info == client.connection_info():
@@ -230,7 +235,8 @@ class HostList(object):
             password (str): The new password to login to the daemon with.
 
         """
-        validate_host_info(hostname, port)
+        if not is_unix_domain_socket(hostname, port):
+            validate_host_info(hostname, port)
         self.check_info_exists(hostname, port, username, skip_host_id=host_id)
 
         if (not password and not username or username == 'localclient') and hostname in LOCALHOST:

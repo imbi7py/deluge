@@ -17,7 +17,7 @@ import socket
 from twisted.internet import reactor
 
 import deluge.component as component
-from deluge.common import get_version, is_ip, is_process_running, windows_check
+from deluge.common import get_version, is_process_running, windows_check
 from deluge.configmanager import get_config_dir
 from deluge.core.core import Core
 from deluge.core.rpcserver import RPCServer, export
@@ -65,7 +65,7 @@ def is_daemon_running(pid_file):
 class Daemon(object):
     """The Deluge Daemon class"""
 
-    def __init__(self, listen_interface=None, interface=None, port=None, standalone=False,
+    def __init__(self, listener, listen_interface=None, standalone=False,
                  read_only_config_keys=None):
         """
         Args:
@@ -100,22 +100,14 @@ class Daemon(object):
         self.core = Core(listen_interface=listen_interface,
                          read_only_config_keys=read_only_config_keys)
 
-        if port is None:
-            port = self.core.config['daemon_port']
-        self.port = port
+        if listener.port is None:
+            listener.port = self.core.config['daemon_port']
+        self.port = listener.port
+        listener.allow_remote = self.core.config['allow_remote']
 
-        if interface and not is_ip(interface):
-            log.error('Invalid UI interface (must be IP Address): %s', interface)
-            interface = None
+        self.rpcserver = RPCServer(listener=listener, listen=not standalone)
 
-        self.rpcserver = RPCServer(
-            port=port,
-            allow_remote=self.core.config['allow_remote'],
-            listen=not standalone,
-            interface=interface
-        )
-
-        log.debug('Listening to UI on: %s:%s and bittorrent on: %s', interface, port, listen_interface)
+        log.debug('Listening to UI on: %r and bittorrent on: %s', listener, listen_interface)
 
     def start(self):
         # Register the daemon and the core RPCs

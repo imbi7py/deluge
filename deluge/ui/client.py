@@ -14,11 +14,12 @@ import logging
 import subprocess
 import sys
 
-from twisted.internet import defer, reactor, ssl
+from twisted.internet import defer, reactor, ssl, address
 from twisted.internet.protocol import ClientFactory
 
 from deluge import error
-from deluge.common import get_localhost_auth, get_version
+from deluge.common import (get_localhost_auth, get_version,
+                           windows_check, is_unix_domain_socket)
 from deluge.decorators import deprecated
 from deluge.transfer import DelugeTransferProtocol
 
@@ -81,11 +82,17 @@ class DelugeRPCProtocol(DelugeTransferProtocol):
         self.factory.daemon.protocol = self
         # Get the address of the daemon that we've connected to
         peer = self.transport.getPeer()
-        self.factory.daemon.host = peer.host
-        self.factory.daemon.port = peer.port
+        if isinstance(address.IPv4Address, address.IPv6Address):
+            self.factory.daemon.host = peer.host
+            self.factory.daemon.port = peer.port
+            host, port = peer.host, peer.port
+        else:
+            self.factory.daemon.host = peer.name
+            self.factory.daemon.port = 0
+            host, port = peer.name, 0
         self.factory.daemon.connected = True
-        log.debug('Connected to daemon at %s:%s..', peer.host, peer.port)
-        self.factory.daemon.connect_deferred.callback((peer.host, peer.port))
+        log.debug('Connected to daemon at %r', peer)
+        self.factory.daemon.connect_deferred.callback((host, port))
 
     def message_received(self, request):
         """
@@ -195,17 +202,16 @@ class DelugeRPCClientFactory(ClientFactory):
         self.event_handlers = event_handlers
 
     def startedConnecting(self, connector):  # NOQA: N802
-        log.debug('Connecting to daemon at "%s:%s"...',
-                  connector.host, connector.port)
+        log.debug('Connecting to daemon at "%r"...', connector)
 
     def clientConnectionFailed(self, connector, reason):  # NOQA: N802
-        log.debug('Connection to daemon at "%s:%s" failed: %s',
-                  connector.host, connector.port, reason.value)
+        log.debug('Connection to daemon at %r failed: %s',
+                  connector, reason.value)
         self.daemon.connect_deferred.errback(reason)
 
     def clientConnectionLost(self, connector, reason):  # NOQA: N802
-        log.debug('Connection lost to daemon at "%s:%s" reason: %s',
-                  connector.host, connector.port, reason.value)
+        log.debug('Connection lost to daemon at "%r" reason: %s',
+                  connector, reason.value)
         self.daemon.host = None
         self.daemon.port = None
         self.daemon.username = None
@@ -223,7 +229,7 @@ class DaemonProxy(object):
     pass
 
 
-class DaemonSSLProxy(DaemonProxy):
+class DaemonRemoteProxy(DaemonProxy):
     def __init__(self, event_handlers=None):
         if event_handlers is None:
             event_handlers = {}
@@ -259,12 +265,15 @@ class DaemonSSLProxy(DaemonProxy):
         :returns: twisted.Deferred
 
         """
-        log.debug('sslproxy.connect()')
+        log.debug('remoteproxy.connect()')
         self.host = host
         self.port = port
-        self.__connector = reactor.connectSSL(self.host, self.port,
-                                              self.__factory,
-                                              ssl.ClientContextFactory())
+        if not windows_check() and is_unix_domain_socket(self.host, self.port):
+            self.__connector = reactor.connectUNIX(self.host, self.__factory)
+        else:
+            self.__connector = reactor.connectSSL(self.host, self.port,
+                                                  self.__factory,
+                                                  ssl.ClientContextFactory())
         self.connect_deferred = defer.Deferred()
         self.daemon_info_deferred = defer.Deferred()
 
@@ -275,7 +284,7 @@ class DaemonSSLProxy(DaemonProxy):
         return self.daemon_info_deferred
 
     def disconnect(self):
-        log.debug('sslproxy.disconnect()')
+        log.debug('remoteproxy.disconnect()')
         self.disconnect_deferred = defer.Deferred()
         self.__connector.disconnect()
         return self.disconnect_deferred
@@ -542,7 +551,7 @@ class Client(object):
             has been established or fails
         """
 
-        self._daemon_proxy = DaemonSSLProxy(dict(self.__event_handlers))
+        self._daemon_proxy = DaemonRemoteProxy(dict(self.__event_handlers))
         self._daemon_proxy.set_disconnect_callback(self.__on_disconnect)
 
         d = self._daemon_proxy.connect(host, port)

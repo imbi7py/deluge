@@ -10,6 +10,8 @@
 """RPCServer Module"""
 from __future__ import unicode_literals
 
+import attr
+
 import logging
 import os
 import stat
@@ -161,8 +163,7 @@ class DelugeRPCProtocol(DelugeTransferProtocol):
         This method is called when a new client connects.
         """
         peer = self.transport.getPeer()
-        log.info('Deluge Client connection made from: %s:%s',
-                 peer.host, peer.port)
+        log.info('Deluge Client connection made from: %r', peer)
         # Set the initial auth level of this session to AUTH_LEVEL_NONE
         self.factory.authorized_sessions[
             self.transport.sessionno] = self.AuthLevel(AUTH_LEVEL_NONE, '')
@@ -345,8 +346,11 @@ class RPCServer(component.Component):
     :type listen: bool
     """
 
-    def __init__(self, port=58846, interface='', allow_remote=False, listen=True):
+    def __init__(self, listener=None, listen=True):
         component.Component.__init__(self, 'RPCServer')
+
+        if listener is None:
+            listener = ListenSSL()
 
         self.factory = Factory()
         self.factory.protocol = DelugeRPCProtocol
@@ -366,24 +370,7 @@ class RPCServer(component.Component):
         if not listen:
             return
 
-        if allow_remote:
-            hostname = ''
-        else:
-            hostname = 'localhost'
-
-        if interface:
-            hostname = interface
-
-        log.info('Starting DelugeRPC server %s:%s', hostname, port)
-
-        # Check for SSL keys and generate some if needed
-        check_ssl_keys()
-
-        try:
-            reactor.listenSSL(port, self.factory, ServerContextFactory(), interface=hostname)
-        except Exception as ex:
-            log.debug('Daemon already running or port not available.: %s', ex)
-            raise
+        listener.start(self.factory)
 
     def register_object(self, obj, name=None):
         """
@@ -596,3 +583,45 @@ def generate_ssl_keys():
     # Make the files only readable by this user
     for f in ('daemon.pkey', 'daemon.cert'):
         os.chmod(os.path.join(ssl_dir, f), stat.S_IREAD | stat.S_IWRITE)
+
+
+@attr.s
+class ListenSSL(object):
+    interface = attr.ib(default='')
+    port = attr.ib(default=58846)
+    allow_remote = attr.ib(default=False)
+
+    def start(self, factory):
+        from deluge.common import is_ip
+        if self.interface and not is_ip(self.interface):
+            log.error('Invalid UI interface (must be IP Address): %s',
+                      self.interface)
+            self.interface = None
+        if not self.interface:
+            self.interface = '' if self.allow_remote else 'localhost'
+
+        # Check for SSL keys and generate some if needed
+        check_ssl_keys()
+
+        try:
+            reactor.listenSSL(self.port,
+                              factory,
+                              ServerContextFactory(),
+                              interface=self.interface)
+        except Exception as ex:
+            log.debug('Daemon already running or port not available.: %s', ex)
+            raise
+
+
+@attr.s
+class ListenUNIX(object):
+    path = attr.ib()
+    port = 0
+
+    def start(self, factory):
+        log.info('Starting DelugeRPC server at path %s', self.path)
+        try:
+            reactor.listenUNIX(self.path, factory)
+        except Exception as ex:
+            log.debug('Daemon already running or port not available.: %s', ex)
+            raise
